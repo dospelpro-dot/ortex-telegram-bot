@@ -31,7 +31,8 @@ universe.py      → кандидаты (StockTwits trending + watchlist.txt)
 sources/         → адаптеры данных (каждый деградирует мягко при отсутствии ключа)
   market.py      → цена, prior-move, rVol, RSI, ликвидность, cap (Polygon → yfinance)
   ortex.py       → SI %float, CTB, utilization, DTC, опционы (топливо сквиза)
-  social.py      → velocity/acceleration упоминаний (StockTwits/X/Reddit) ← ГЛАВНОЕ
+  social.py      → bull-velocity/acceleration упоминаний (StockTwits/X/Reddit) ← ГЛАВНОЕ
+sentiment.py     → классификатор bull/bear (native-метка ST + лексикон) для social
 scoring.py       → фильтры-гейты + 4 суб-скора → композит
 pipeline.py      → run_scan() → топ-N → format_report() (Telegram HTML)
 bot.py           → /scan /status /start + опц. авто-скан
@@ -53,7 +54,10 @@ config.py        → все веса/пороги/ключи (правь тут,
 
 1. **Приоритет social velocity.** Любая доработка сигнала сначала улучшает
    `social.py` / вес social. Сырые счётчики упоминаний бесполезны — важна
-   *скорость и ускорение*, а также *широта авторов* (не один спамер).
+   *скорость и ускорение БЫЧЬЕГО внимания*, широта авторов (не один спамер) и
+   направление. Sentiment (`scanner/sentiment.py`) отделяет up-петлю от
+   медвежьего навала: считаем `bull_velocity` и `bull_ratio`, а не сырой объём.
+   StockTwits даёт native-метку Bullish/Bearish; для X/Reddit — лексикон.
 2. **Тайминг важнее громкости.** Не предлагай имена, которые уже сделали
    движение — это противоречит «до momentum-квантов». `early_stage` гейт священен.
 3. **Мягкая деградация.** Новый источник данных не должен ронять пайплайн:

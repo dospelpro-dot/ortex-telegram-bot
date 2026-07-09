@@ -61,14 +61,17 @@ def passes_filters(m: MarketSnapshot, o: OrtexSnapshot | None) -> tuple[bool, st
 def _social_score(s: SocialSnapshot | None) -> tuple[float, str]:
     if not s or s.sources_live == 0:
         return 0.0, "no social data"
-    # Acceleration from a low base is the fingerprint; scale by absolute recent.
+    # Bullish acceleration from a low base is the fingerprint. Volume counts
+    # only BULLISH mentions; a sentiment tilt term rewards net-bullish attention
+    # and pulls down names where the chatter is dominated by bears/puts/rug.
     accel = _sat(max(s.acceleration, 0.0), k=1.5)
-    volume = _sat(s.mentions_recent, k=25)
+    bull_vol = _sat(s.bull_recent, k=25)
     breadth = _sat(s.unique_authors_recent, k=15)
-    score = 0.55 * accel + 0.25 * volume + 0.20 * breadth
+    tilt = s.bull_ratio  # 0..1
+    score = 0.45 * accel + 0.20 * bull_vol + 0.15 * breadth + 0.20 * tilt
     reason = (
-        f"social vel {s.velocity:+.0%}, {s.mentions_recent} mentions/{s.unique_authors_recent} "
-        f"authors (recent {config_recent()}h)"
+        f"social: {s.bull_ratio:.0%} bull ({s.bull_recent}▲/{s.bear_recent}▼), "
+        f"bull-vel {s.bull_velocity:+.0%}, {s.unique_authors_recent} authors ({config_recent()}h)"
     )
     return score, reason
 

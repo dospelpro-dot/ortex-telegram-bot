@@ -1,16 +1,17 @@
-"""Social velocity — the primary signal.
+"""Social velocity — the primary signal, now sentiment-aware.
 
-We do NOT care about raw mention counts (those favour mega-caps). We care
-about the *rate of change* of attention: mentions accelerating from a low
-base, driven by many distinct authors, is the reflexive-loop fingerprint.
+We do NOT care about raw mention counts (those favour mega-caps) and we do NOT
+treat all attention equally: the reflexive UP-loop is driven by *bullish*
+attention accelerating. "shorting this / puts / rug" is the opposite signal and
+must not inflate the score. So every message carries a sentiment (+1/-1/0) and
+we bucket bull vs bear across recent/prior windows.
 
 Sources, best-effort and independently optional:
-  * StockTwits  — public streams endpoint, no key (rate-limited)
+  * StockTwits  — public streams, no key; uses its native Bullish/Bearish tag
   * X / Twitter — API v2 recent search, needs X_BEARER_TOKEN
   * Reddit      — PRAW over WSB-style subs, needs client id/secret
 
-Each source yields message timestamps; we bucket them into "recent" vs
-"prior" windows to derive velocity and acceleration.
+Each source yields (timestamp, author, sentiment) tuples.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 import requests
 
 import config
+from scanner.sentiment import classify
 
 log = logging.getLogger("scanner.social")
 
@@ -31,23 +33,45 @@ PRIOR_HOURS = 6       # the comparison window immediately before it
 @dataclass
 class SocialSnapshot:
     symbol: str
-    mentions_recent: int
-    mentions_prior: int
+    bull_recent: int
+    bear_recent: int
+    bull_prior: int
+    bear_prior: int
     unique_authors_recent: int
     sources_live: int          # how many providers actually answered
 
     @property
-    def velocity(self) -> float:
-        """Growth rate of mentions, recent vs prior window."""
-        base = max(self.mentions_prior, 1)
-        return (self.mentions_recent - self.mentions_prior) / base
+    def mentions_recent(self) -> int:
+        return self.bull_recent + self.bear_recent
+
+    @property
+    def net_recent(self) -> int:
+        return self.bull_recent - self.bear_recent
+
+    @property
+    def bull_ratio(self) -> float:
+        """Share of directional mentions that are bullish (0..1). 0.5 if none."""
+        directional = self.bull_recent + self.bear_recent
+        return self.bull_recent / directional if directional else 0.5
+
+    @property
+    def bull_velocity(self) -> float:
+        """Growth rate of BULLISH mentions, recent vs prior window."""
+        base = max(self.bull_prior, 1)
+        return (self.bull_recent - self.bull_prior) / base
 
     @property
     def acceleration(self) -> float:
-        """Reflexive tell: recent window running hot on an absolute basis
-        while also outpacing the prior window. Scaled by breadth of authors."""
+        """Reflexive tell: bullish attention accelerating, weighted by author
+        breadth (not one spammer) and damped when attention is net-bearish."""
         breadth = min(self.unique_authors_recent / 10.0, 3.0)
-        return self.velocity * (1.0 + breadth)
+        direction = 0.3 + 0.7 * self.bull_ratio  # 0.3 (all bear) .. 1.0 (all bull)
+        return max(self.bull_velocity, 0.0) * (1.0 + breadth) * direction
+
+    # Backwards-compatible alias used in older reports.
+    @property
+    def velocity(self) -> float:
+        return self.bull_velocity
 
 
 def _now() -> dt.datetime:
@@ -75,29 +99,37 @@ class Social:
             return None
 
     def snapshot(self, symbol: str) -> SocialSnapshot:
-        recent, prior, authors, live = 0, 0, set(), 0
+        bull_r = bear_r = bull_p = bear_p = 0
+        authors: set = set()
+        live = 0
         for fetch in (self._stocktwits, self._x, self._reddit_mentions):
             try:
-                stamps = fetch(symbol)
+                items = fetch(symbol)
             except Exception as exc:  # noqa: BLE001
                 log.debug("%s failed for %s: %s", fetch.__name__, symbol, exc)
-                stamps = None
-            if stamps is None:
+                items = None
+            if items is None:
                 continue
             live += 1
             now = _now()
-            for ts, author in stamps:
+            for ts, author, sent in items:
                 age_h = (now - ts).total_seconds() / 3600.0
                 if 0 <= age_h < RECENT_HOURS:
-                    recent += 1
+                    if sent >= 0:
+                        bull_r += 1
+                    else:
+                        bear_r += 1
                     if author:
                         authors.add((fetch.__name__, author))
                 elif RECENT_HOURS <= age_h < RECENT_HOURS + PRIOR_HOURS:
-                    prior += 1
-        return SocialSnapshot(symbol, recent, prior, len(authors), live)
+                    if sent >= 0:
+                        bull_p += 1
+                    else:
+                        bear_p += 1
+        return SocialSnapshot(symbol, bull_r, bear_r, bull_p, bear_p, len(authors), live)
 
-    # --- StockTwits (no key) ----------------------------------------------
-    def _stocktwits(self, symbol: str) -> list[tuple[dt.datetime, str]] | None:
+    # --- StockTwits (no key; native sentiment) ----------------------------
+    def _stocktwits(self, symbol: str) -> list[tuple[dt.datetime, str, int]] | None:
         r = requests.get(
             f"https://api.stocktwits.com/api/2/streams/symbol/{symbol}.json",
             timeout=15,
@@ -108,13 +140,21 @@ class Social:
         out = []
         for m in r.json().get("messages", []):
             ts = _parse(m.get("created_at"))
+            if not ts:
+                continue
             user = (m.get("user") or {}).get("username")
-            if ts:
-                out.append((ts, user))
+            basic = ((m.get("entities") or {}).get("sentiment") or {}).get("basic")
+            if basic == "Bullish":
+                sent = 1
+            elif basic == "Bearish":
+                sent = -1
+            else:
+                sent = classify(m.get("body"))  # untagged -> lexicon
+            out.append((ts, user, sent))
         return out
 
     # --- X / Twitter API v2 -----------------------------------------------
-    def _x(self, symbol: str) -> list[tuple[dt.datetime, str]] | None:
+    def _x(self, symbol: str) -> list[tuple[dt.datetime, str, int]] | None:
         if not self.x_token:
             return None
         r = requests.get(
@@ -133,11 +173,11 @@ class Social:
         for t in r.json().get("data", []):
             ts = _parse(t.get("created_at"))
             if ts:
-                out.append((ts, t.get("author_id")))
+                out.append((ts, t.get("author_id"), classify(t.get("text"))))
         return out
 
     # --- Reddit (PRAW) -----------------------------------------------------
-    def _reddit_mentions(self, symbol: str) -> list[tuple[dt.datetime, str]] | None:
+    def _reddit_mentions(self, symbol: str) -> list[tuple[dt.datetime, str, int]] | None:
         if not self._reddit:
             return None
         out = []
@@ -145,7 +185,8 @@ class Social:
         for post in self._reddit.subreddit(subs).search(symbol, sort="new", time_filter="day", limit=50):
             ts = dt.datetime.fromtimestamp(post.created_utc, tz=dt.timezone.utc)
             author = str(post.author) if post.author else None
-            out.append((ts, author))
+            text = f"{post.title} {getattr(post, 'selftext', '')}"
+            out.append((ts, author, classify(text)))
         return out
 
 
