@@ -1,0 +1,5 @@
+# Tickers to ALWAYS scan (one per line, # for comments).
+# The live universe already pulls StockTwits trending; add convictions here.
+# Example:
+# GME
+# AMC

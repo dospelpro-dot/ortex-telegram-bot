@@ -1,4 +1,5 @@
-python-telegram-bot
-openai
-requests
-python-dotenv
+python-telegram-bot[job-queue]>=20.0
+requests>=2.31
+python-dotenv>=1.0
+yfinance>=0.2.40        # market-data fallback when POLYGON_API_KEY is unset
+praw>=7.7              # optional: Reddit social source
