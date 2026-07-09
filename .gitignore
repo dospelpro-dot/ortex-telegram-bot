@@ -9,9 +9,10 @@ __pycache__/
 venv/
 env/
 
-# Local data / logs
+# Local data / logs (your trading log stays local)
 *.log
 watchlist.local.txt
+data/*.jsonl
 
 # OS / editor
 .DS_Store

@@ -32,6 +32,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"за <b>{mis.horizon_days_min}–{mis.horizon_days_max} дня</b>, приоритет — social velocity.\n\n"
         "Команды:\n"
         "/scan — запустить скан сейчас\n"
+        "/backtest — оценить прошлые пики и калибровку весов\n"
         "/status — статус источников данных",
         parse_mode=ParseMode.HTML,
     )
@@ -49,7 +50,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Сканирую вселенную розничного внимания…")
     try:
-        report = format_report(run_scan())
+        # log_picks=True records the top-N so the backtester can grade them later.
+        report = format_report(run_scan(log_picks=True))
     except Exception as exc:  # noqa: BLE001
         log.exception("scan failed")
         await update.message.reply_text(f"❌ Ошибка скана: {exc}")
@@ -57,10 +59,29 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 
+async def backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Grade matured picks and show calibration stats."""
+    from backtest.analyze import analyze, format_report as fmt
+    from backtest.evaluate import evaluate_pending
+
+    await update.message.reply_text("📊 Оцениваю созревшие пики…")
+    try:
+        done, pending = evaluate_pending()
+        report = fmt(analyze())
+    except Exception as exc:  # noqa: BLE001
+        log.exception("backtest failed")
+        await update.message.reply_text(f"❌ Ошибка бэктеста: {exc}")
+        return
+    await update.message.reply_text(
+        f"Оценено сейчас: {done}, ждут горизонта: {pending}\n\n<pre>{report}</pre>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def _scheduled_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not config.TELEGRAM_CHAT_ID:
         return
-    report = format_report(run_scan())
+    report = format_report(run_scan(log_picks=True))
     await context.bot.send_message(
         chat_id=config.TELEGRAM_CHAT_ID, text=report, parse_mode=ParseMode.HTML
     )
@@ -75,6 +96,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("backtest", backtest))
 
     # Optional: auto-scan every N minutes if a chat id and schedule are set.
     import os

@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m scanner.pipeline)",
+      "Bash(python -m scanner.pipeline:*)",
+      "Bash(python -m backtest.evaluate)",
+      "Bash(python -m backtest.analyze)",
       "Bash(python bot.py)",
       "Bash(python -m py_compile:*)",
       "Bash(pip install -r requirements.txt)",

@@ -6,6 +6,7 @@ they return None so the pipeline can skip the name rather than crash.
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from dataclasses import dataclass
 
@@ -63,6 +64,39 @@ class MarketData:
         except Exception as exc:  # noqa: BLE001 - source must never break the pipeline
             log.warning("market snapshot failed for %s: %s", symbol, exc)
         return None
+
+    def daily_bars(self, symbol: str, start: dt.date, end: dt.date) -> list[dict]:
+        """Daily OHLC bars in [start, end], ascending. Used by the backtester
+        to measure realised return over the horizon. Empty list on failure."""
+        try:
+            if self.polygon_key:
+                r = requests.get(
+                    f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/"
+                    f"{start.isoformat()}/{end.isoformat()}",
+                    params={"adjusted": "true", "sort": "asc", "limit": 120,
+                            "apiKey": self.polygon_key},
+                    timeout=15,
+                )
+                r.raise_for_status()
+                out = []
+                for b in r.json().get("results", []):
+                    d = dt.datetime.fromtimestamp(b["t"] / 1000, tz=dt.timezone.utc).date()
+                    out.append({"date": d.isoformat(), "high": b["h"], "close": b["c"]})
+                return out
+            if self._yf:
+                hist = self._yf.Ticker(symbol).history(
+                    start=start.isoformat(), end=(end + dt.timedelta(days=1)).isoformat()
+                )
+                if hist is None or len(hist) == 0:
+                    return []
+                return [
+                    {"date": idx.date().isoformat(), "high": float(row["High"]),
+                     "close": float(row["Close"])}
+                    for idx, row in hist.iterrows()
+                ]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("daily_bars failed for %s: %s", symbol, exc)
+        return []
 
     # --- Polygon -----------------------------------------------------------
     def _polygon(self, symbol: str, lookback: int) -> MarketSnapshot | None:

@@ -17,7 +17,7 @@ from scanner.universe import build_universe
 log = logging.getLogger("scanner.pipeline")
 
 
-def run_scan(universe_limit: int = 40) -> list[Candidate]:
+def run_scan(universe_limit: int = 40, log_picks: bool = False) -> list[Candidate]:
     market, ortex, social = MarketData(), Ortex(), Social()
     universe = build_universe(limit=universe_limit)
 
@@ -38,6 +38,10 @@ def run_scan(universe_limit: int = 40) -> list[Candidate]:
     scored.sort(key=lambda c: c.score, reverse=True)
     top = scored[: config.MISSION.n_names]
     log.info("scan complete: %d scored, top %d selected", len(scored), len(top))
+    if log_picks and top:
+        # Import lazily so the scanner has no hard dependency on the backtester.
+        from backtest.logger import log_picks as _log
+        _log(top)
     return top
 
 
@@ -73,11 +77,17 @@ def format_report(top: list[Candidate]) -> str:
 
 
 if __name__ == "__main__":
+    import argparse
+    import re
+
+    parser = argparse.ArgumentParser(description="Reflexive-attention equity scan")
+    parser.add_argument("--log", action="store_true", help="log top picks for backtesting")
+    parser.add_argument("--limit", type=int, default=40, help="universe size to scan")
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     inactive = config.missing_keys()
     if inactive:
         log.warning("Inactive integrations:\n  - %s", "\n  - ".join(inactive))
-    report = format_report(run_scan())
-    # Strip HTML tags for terminal readability.
-    import re
-    print(re.sub(r"<[^>]+>", "", report))
+    report = format_report(run_scan(universe_limit=args.limit, log_picks=args.log))
+    print(re.sub(r"<[^>]+>", "", report))  # strip HTML for terminal readability
