@@ -40,6 +40,7 @@ class Candidate:
     score: float
     sub: dict = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
     market: MarketSnapshot | None = None
     ortex: OrtexSnapshot | None = None
     social: SocialSnapshot | None = None
@@ -111,6 +112,33 @@ def _early_stage_score(m: MarketSnapshot) -> tuple[float, str]:
     return score, f"early: rVol {m.rel_volume:.1f}x, RSI {m.rsi14:.0f}, prior {m.prior_move_pct:+.0f}%"
 
 
+def _spark_score(m: MarketSnapshot, s: SocialSnapshot | None) -> tuple[float, str]:
+    """FIRST SPARK — the earliest edge of the reflexive loop.
+
+    Detects a DIVERGENCE: bullish attention already accelerating while the tape
+    is still asleep (price barely moved, volume not yet elevated). This is the
+    point *before* momentum quants — they trade realised price/volume, which
+    hasn't printed yet. Once the tape confirms, the spark has already caught.
+
+        spark = social_heat × price_quiet × volume_quiet   (each in [0, 1])
+    """
+    if not s or s.sources_live == 0:
+        return 0.0, "spark: no social data"
+    # Heat: bullish acceleration from a low base, but require a real handful of
+    # bullish posts so 1->2 mentions doesn't read as a spark.
+    heat = _sat(max(s.bull_velocity, 0.0), k=1.0) * _sat(s.bull_recent, k=6) * s.bull_ratio
+    # Quiet tape: reward price that hasn't run UP yet (down/flat is fine).
+    price_quiet = math.exp(-((max(m.prior_move_pct, 0.0) / 6.0) ** 2))
+    # Quiet volume: reward relative volume still near baseline (~1x).
+    volume_quiet = math.exp(-((max(m.rel_volume - 1.0, 0.0) / 1.5) ** 2))
+    score = heat * price_quiet * volume_quiet
+    reason = (
+        f"spark: attention {s.bull_velocity:+.0%} vs price {m.prior_move_pct:+.0f}% / "
+        f"rVol {m.rel_volume:.1f}x (divergence {score:.2f})"
+    )
+    return score, reason
+
+
 def _retail_score(m: MarketSnapshot) -> tuple[float, str]:
     if not m.market_cap:
         return 0.5, "cap unknown"
@@ -128,22 +156,27 @@ def score_candidate(
 ) -> Candidate:
     w = config.WEIGHTS
     social, r_social = _social_score(s)
+    spark, r_spark = _spark_score(m, s)
     squeeze, r_squeeze = _squeeze_score(o)
     early, r_early = _early_stage_score(m)
     retail, r_retail = _retail_score(m)
 
     composite = (
         w.social_velocity * social
+        + w.first_spark * spark
         + w.squeeze_fuel * squeeze
         + w.early_stage * early
         + w.retail_owned * retail
     )
+    flags = ["🔥 FIRST SPARK"] if spark >= config.SPARK_FLAG_THRESHOLD else []
     return Candidate(
         symbol=symbol,
         score=round(composite, 4),
-        sub={"social": round(social, 3), "squeeze": round(squeeze, 3),
-             "early": round(early, 3), "retail": round(retail, 3)},
-        reasons=[r_social, r_squeeze, r_early, r_retail],
+        sub={"social": round(social, 3), "spark": round(spark, 3),
+             "squeeze": round(squeeze, 3), "early": round(early, 3),
+             "retail": round(retail, 3)},
+        reasons=[r_social, r_spark, r_squeeze, r_early, r_retail],
+        flags=flags,
         market=m,
         ortex=o,
         social=s,

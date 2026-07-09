@@ -61,10 +61,12 @@ def format_report(top: list[Candidate]) -> str:
     ]
     for i, c in enumerate(top, 1):
         px = f"${c.market.price:.2f}" if c.market else "?"
-        lines.append(f"<b>{i}. ${c.symbol}</b>  {px}  ·  score <b>{c.score:.2f}</b>")
+        flag = ("  " + " ".join(c.flags)) if c.flags else ""
+        lines.append(f"<b>{i}. ${c.symbol}</b>  {px}  ·  score <b>{c.score:.2f}</b>{flag}")
         lines.append(
-            f"   social {c.sub['social']:.2f} · squeeze {c.sub['squeeze']:.2f} · "
-            f"early {c.sub['early']:.2f} · retail {c.sub['retail']:.2f}"
+            f"   social {c.sub['social']:.2f} · spark {c.sub['spark']:.2f} · "
+            f"squeeze {c.sub['squeeze']:.2f} · early {c.sub['early']:.2f} · "
+            f"retail {c.sub['retail']:.2f}"
         )
         for r in c.reasons:
             lines.append(f"   • {r}")

@@ -20,8 +20,8 @@ from backtest import store
 
 log = logging.getLogger("backtest.analyze")
 
-SUB_KEYS = ["social", "squeeze", "early", "retail"]
-WEIGHT_ENV = {"social": "W_SOCIAL", "squeeze": "W_SQUEEZE",
+SUB_KEYS = ["social", "spark", "squeeze", "early", "retail"]
+WEIGHT_ENV = {"social": "W_SOCIAL", "spark": "W_SPARK", "squeeze": "W_SQUEEZE",
               "early": "W_EARLY", "retail": "W_RETAIL"}
 MIN_SAMPLES = 30
 
@@ -88,8 +88,9 @@ def format_report(a: dict) -> str:
         "  Корреляция суб-скора с реальным max +% (выше = сигнал лучше предсказывает):",
     ]
     cur = config.WEIGHTS
-    cur_map = {"social": cur.social_velocity, "squeeze": cur.squeeze_fuel,
-               "early": cur.early_stage, "retail": cur.retail_owned}
+    cur_map = {"social": cur.social_velocity, "spark": cur.first_spark,
+               "squeeze": cur.squeeze_fuel, "early": cur.early_stage,
+               "retail": cur.retail_owned}
     for k in SUB_KEYS:
         lines.append(f"    {k:<8} corr {a['correlations'][k]:+.2f}   вес сейчас {cur_map[k]:.2f}")
 

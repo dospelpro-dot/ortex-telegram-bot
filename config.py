@@ -73,17 +73,20 @@ class Weights:
     momentum draws quants and before index/AUM mechanics draw ETF flows.
     """
 
-    social_velocity: float = _envf("W_SOCIAL", 0.40)
-    squeeze_fuel: float = _envf("W_SQUEEZE", 0.30)
-    early_stage: float = _envf("W_EARLY", 0.20)
+    social_velocity: float = _envf("W_SOCIAL", 0.35)
+    first_spark: float = _envf("W_SPARK", 0.15)      # attention accelerating BEFORE price moves
+    squeeze_fuel: float = _envf("W_SQUEEZE", 0.25)
+    early_stage: float = _envf("W_EARLY", 0.15)
     retail_owned: float = _envf("W_RETAIL", 0.10)
 
     def normalised(self) -> "Weights":
-        total = self.social_velocity + self.squeeze_fuel + self.early_stage + self.retail_owned
+        total = (self.social_velocity + self.first_spark + self.squeeze_fuel
+                 + self.early_stage + self.retail_owned)
         if total <= 0:
             return Weights()
         return Weights(
             social_velocity=self.social_velocity / total,
+            first_spark=self.first_spark / total,
             squeeze_fuel=self.squeeze_fuel / total,
             early_stage=self.early_stage / total,
             retail_owned=self.retail_owned / total,
@@ -108,6 +111,10 @@ class Filters:
 MISSION = Mission()
 WEIGHTS = Weights().normalised()
 FILTERS = Filters()
+
+# A candidate whose spark sub-score clears this gets the 🔥 "first spark" flag:
+# bullish attention accelerating while price/volume are still dormant.
+SPARK_FLAG_THRESHOLD = _envf("SPARK_THRESHOLD", 0.55)
 
 
 def missing_keys() -> list[str]:
